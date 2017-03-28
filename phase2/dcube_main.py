@@ -1,6 +1,7 @@
 from gm_params import *
 from gm_sql import *
 from math import sqrt
+import math
 import os
 import time
 
@@ -79,15 +80,10 @@ def select_dimension(db_conn, mass_b, mass_r, N, dim_select_policy = DIM_SELECT_
                 cur.execute("insert into B_" + str(j) + ' values (' + a + ')')    
         return maxDimen
 
-def calculate_density(db_conn, mass_b, mass_r, N, B_i_lens, density_measure = DENSITY_MEASURE):
+def calculate_density(db_conn, mass_b, mass_r, N, B_i_lens, R_i_lens = [], density_measure = DENSITY_MEASURE):
     # input table: B_i, R_i
     cur = db_conn.cursor()
     if density_measure == "ARITHMIC":
-        # sumB_1 = 0
-        # for j in range(1, N + 1):
-        #     cur.execute("select count(*) from B_" + str(j))
-        #     for x in cur:
-        #         sumB_1 += x[0]
         sumB = sum(B_i_lens)
         if sumB == 0:
             return -1
@@ -100,21 +96,26 @@ def calculate_density(db_conn, mass_b, mass_r, N, B_i_lens, density_measure = DE
                 prodB *= x[0]
         if prodB==0:
             return 0
+        # prodB = reduce(lambda x,y:x*y,B_i_lens)
+        # if prodB == 0:
+        #     return -1
         return mass_b*1.0/pow(prodB,1.0/N)
+
     elif density_measure == "SUSPICIOUSNESS":
-        sumB_R = 0
-        for j in range(1, N + 1):
-            cur.execute("select count(*) from B_" + str(j))
-            for x in cur:
-                tmpB = x[0]
-            cur.execute("select count(*) from R_" + str(j))
-            for x in cur:
-                tmpR = x[0]
-            if tmpR!=0:
-                sumB_R+=tmpB*1.0/tmpR
-        if mass_r==0 or sumB_R==0:
+        # sumB_R = 0
+        # for j in range(1, N + 1):
+        #     cur.execute("select count(*) from B_" + str(j))
+        #     for x in cur:
+        #         tmpB = x[0]
+        #     cur.execute("select count(*) from R_" + str(j))
+        #     for x in cur:
+        #         tmpR = x[0]
+        #     if tmpR!=0:
+        #         sumB_R+=tmpB*1.0/tmpR
+        sumB_R = sum([b * r for b,r in zip(B_i_lens, R_i_lens)])
+        if mass_r == 0 or sumB_R == 0 or mass_b == 0:
             return 0
-        return mass_b*(log(mass_b*1.0/mass_r)-1) + mass_r*sumB_R - mass_b*log(sumB_R)
+        return mass_b*(math.log(mass_b*1.0/mass_r)-1) + mass_r*sumB_R - mass_b*math.log(sumB_R)
 
 def find_single_block(db_conn, N, mass_r, density_measure = DENSITY_MEASURE):
     cur = db_conn.cursor()
@@ -151,11 +152,16 @@ def find_single_block(db_conn, N, mass_r, density_measure = DENSITY_MEASURE):
         cur.execute("create index on B_" + str(i) + "(att)")
 
         b_i_lens = []
+        R_i_lens = []
         for idx in range(1, N + 1):
             in_cur = db_conn.cursor()
             in_cur.execute("select count(*) from B_" + str(idx))
             for x in in_cur:
                 b_i_lens.append(x[0])
+            in_cur.execute("select count(*) from R_" + str(idx))
+            for x in in_cur:
+                R_i_lens.append(x[0])
+
 
         cur.execute("SELECT * from D_" + str(i))
         for count,item in enumerate(cur):
@@ -169,7 +175,7 @@ def find_single_block(db_conn, N, mass_r, density_measure = DENSITY_MEASURE):
             # print 'time1: ' + str(time.time() - base)
             # base = time.time()
             mass_b -= x
-            density = calculate_density(db_conn,mass_b,mass_r, N, b_i_lens)
+            density = calculate_density(db_conn,mass_b,mass_r, N, b_i_lens, R_i_lens)
             # print 'time2: ' + str(time.time() - base)
             # base = time.time()
             in_cur.execute("UPDATE order_" + str(i) + " set r=" + str(r) + " where att='" + a + "'")
@@ -229,15 +235,11 @@ def Dcube(db_conn, N, K):
         # calculate volume
         vList = []
         for v in range(1,N+1):
-            cur.execute("select max(att_" + str(v) + ") from result_" + str(k))
-            currMax = 0
+            cur.execute("select count(*) from B_" + str(v))
+            currCard = 0
             for x in cur:
-                currMax = x[0]
-            cur.execute("select min(att_" + str(v) + ") from result_" + str(k))
-            currMin = 0
-            for x in cur:
-                currMin = x[0]
-            vList.append(str(int(currMax) - int(currMin) + 1))
+                currCard = x[0]
+            vList.append(str(currCard))
         print str(k) + 'th block volume: ' + '*'.join(vList)
 
 
