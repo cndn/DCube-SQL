@@ -15,6 +15,9 @@ def col_fmt_str(N):
 def inner_join_str(table, N):
     res = ' '.join(["INNER JOIN B_" + str(i) + " on ' + table + '.att_" + str(i) + "=B_" + str(i) + ".att" for i in range(1, N+1)])
     return res
+
+def update_R_str(N):
+    return ' and '.join(["att_" + str(idx) + " in (select att from B_" + str(idx) + ")" for idx in range(1,N+1)])
     
 def load_data(db_conn, col_fmt, cols, filename, delimeter = ','):
     gm_sql_table_drop_create(db_conn, 'R', col_fmt)
@@ -118,7 +121,6 @@ def find_single_block(db_conn, N, mass_r, density_measure = DENSITY_MEASURE):
     gm_sql_create_and_insert(db_conn, 'B', 'R', col_fmt_str(N), col_str(N), '*')
     
     mass_b = mass_r
-    print 'mass_r: ' + str(mass_b)
     for j in range(1, N + 1):
         gm_sql_create_and_insert(db_conn, 'B_' + str(j), 'R_' + str(j), 'att varchar', 'att', 'att')
         
@@ -131,7 +133,6 @@ def find_single_block(db_conn, N, mass_r, density_measure = DENSITY_MEASURE):
         for x in cur:
             sumB += x[0]
     while sumB != 0:
-        print 'mass_b: ' + str(mass_b)
         for j in range(1, N + 1):
             gm_sql_table_drop_create(db_conn, 'MB_' + str(j), 'att varchar, col_sum integer')
             cur.execute("INSERT INTO MB_" + str(j) + " select att_" + str(j) + ",sum(x) from B group by att_" + str(j))
@@ -146,12 +147,6 @@ def find_single_block(db_conn, N, mass_r, density_measure = DENSITY_MEASURE):
         if B_len == 0:
             B_len = 1e-6
         cur.execute("INSERT INTO D_" + str(i) + " select att, col_sum from MB_" + str(i) + " where col_sum <= " + str(1.0 * mass_b / B_len) + " order by col_sum asc")
-        # gm_sql_create_and_insert(db_conn, 'D_copy_' + str(i), 'D_' + str(i), 'att varchar, col_sum integer', 'att, col_sum', '*')
-        # gm_sql_print_table(db_conn,'D_' + str(i)) #checked
-        # D_len = table_len(db_conn, 'D_' + str(i))
-        # gm_sql_table_drop_create(db_conn, 'B_' + str(i), 'att varchar')
-        
-        # cur.execute("INSERT INTO B_" + str(i) + " select att from MB_" + str(i))
 
         cur.execute("create index on B_" + str(i) + "(att)")
 
@@ -183,8 +178,6 @@ def find_single_block(db_conn, N, mass_r, density_measure = DENSITY_MEASURE):
             # print 'time3: ' + str(time.time() - base)
             # base = time.time()
             if density > maxDensity:
-                if 2000 < density < 2001:
-                    print density,r
                 maxDensity, maxR = density, r
 
             # cur.execute("delete from D_" + str(i) + " where att in (select att from D_" + str(i) + " limit 1)")
@@ -194,7 +187,6 @@ def find_single_block(db_conn, N, mass_r, density_measure = DENSITY_MEASURE):
             cur.execute("select count(*) from B_" + str(j))
             for x in cur:
                 sumB += x[0]
-        print 'maxR: ' + str(maxR)
     for j in range(1, N + 1):
         gm_sql_table_drop_create(db_conn, 'B_' + str(j), 'att varchar')
         cur.execute("INSERT INTO B_" + str(j) + " select att from order_" + str(j) + " where r >= " + str(maxR))
@@ -216,38 +208,37 @@ def Dcube(db_conn, N, K):
             mass_r = x[0]
         for j in range(1,N+1):
             gm_sql_create_and_insert(db_conn, 'R_' + str(j), 'R', 'att varchar', 'att', 'distinct att_' + str(j))
-        print k
         find_single_block(db_conn,N,mass_r)
 
-        for j in range(1,N+1):
-            print 'B'+str(j)
-            gm_sql_print_table(db_conn,'B_' + str(j))
-
-        # for j in range(1,N+1):
-        #     gm_sql_table_drop_create(db_conn, 'tmp_R' , col_fmt)
-        #     cur.execute("INSERT INTO tmp_R select R.* from R left join B_" + str(j) + " on R.att_" + str(j) + "=B_" + str(j) + ".att where B_" + str(j) + ".att is null")
-        #     gm_sql_create_and_insert(db_conn, 'R', 'tmp_R' , col_fmt, col, '*')
-        cur.execute("delete from R where att_1 in (select att from B_1) and att_2 in (select att from B_2) and att_3 in (select att from B_3)")
-
-
+        cur.execute("delete from R where " + update_R_str(N))
         gm_sql_create_and_insert(db_conn, 'B_ori', 'R_ori', col_fmt, col, '*')
+        
+        
         for j in range(1,N+1):   
             gm_sql_table_drop_create(db_conn, 'tmp_B_ori' , col_fmt)
             cur.execute("INSERT INTO tmp_B_ori select B_ori.* from B_ori inner join B_" + str(j) + " on B_ori.att_" + str(j) + "=B_" + str(j) + ".att")
             gm_sql_create_and_insert(db_conn, 'B_ori', 'tmp_B_ori' , col_fmt, col, '*')
 
         gm_sql_create_and_insert(db_conn, 'result_' + str(k), 'B_ori', col_fmt, col, '*')
+        gm_sql_print_table(db_conn,'result_' + str(k))
+
         cur.execute("select sum(x) from result_" + str(k))
         for x in cur:
             print str(k) + 'th block mass: ' + str(x[0])
-        cur.execute("select max(att_1) from result_" + str(k))
-        currMax = 0
-        for x in cur:
-            print str(k) + 'th block max: ' + str(x[0])
-        cur.execute("select min(att_1) from result_" + str(k))
-        currMin = 0
-        for x in cur:
-            print str(k) + 'th block min: ' + str(x[0])
+
+        # calculate volume
+        vList = []
+        for v in range(1,N+1):
+            cur.execute("select max(att_" + str(v) + ") from result_" + str(k))
+            currMax = 0
+            for x in cur:
+                currMax = x[0]
+            cur.execute("select min(att_" + str(v) + ") from result_" + str(k))
+            currMin = 0
+            for x in cur:
+                currMin = x[0]
+            vList.append(str(int(currMax) - int(currMin) + 1))
+        print str(k) + 'th block volume: ' + '*'.join(vList)
 
 
 if __name__ == '__main__':
