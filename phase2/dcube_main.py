@@ -89,33 +89,15 @@ def calculate_density(db_conn, mass_b, mass_r, N, B_i_lens, R_i_lens = [], densi
             return -1
         return (N*mass_b*1.0/sumB)
     elif density_measure == "GEOMETRIC":
-        # prodB = 0
-        # for j in range(1, N + 1):
-        #     cur.execute("select count(*) from B_" + str(j))
-        #     for x in cur:
-        #         prodB *= x[0]
-        # if prodB==0:
-            # return 0
         prodB = reduce(lambda x,y:x*y,B_i_lens)
         if prodB == 0:
             return -1
         return mass_b*1.0/pow(prodB,1.0/N)
-
     elif density_measure == "SUSPICIOUSNESS":
-        # sumB_R = 0
-        # for j in range(1, N + 1):
-        #     cur.execute("select count(*) from B_" + str(j))
-        #     for x in cur:
-        #         tmpB = x[0]
-        #     cur.execute("select count(*) from R_" + str(j))
-        #     for x in cur:
-        #         tmpR = x[0]
-        #     if tmpR!=0:
-        #         sumB_R+=tmpB*1.0/tmpR
-        sumB_R = sum([1.0 * b / r for b,r in zip(B_i_lens, R_i_lens)])
-        if mass_r == 0 or sumB_R == 0 or mass_b == 0:
+        prodB_R = reduce(lambda x,y:x*y,[1.0 * b / r for b,r in zip(B_i_lens, R_i_lens)])
+        if mass_r == 0 or prodB_R == 0 or mass_b == 0:
             return 0
-        return mass_b*(math.log(mass_b*1.0/mass_r)-1) + mass_r*sumB_R - mass_b*math.log(sumB_R)
+        return mass_b*(math.log(mass_b*1.0/mass_r)-1) + mass_r*prodB_R - mass_b*math.log(prodB_R)
 
 def find_single_block(db_conn, N, mass_r, density_measure = DENSITY_MEASURE):
     cur = db_conn.cursor()
@@ -163,28 +145,18 @@ def find_single_block(db_conn, N, mass_r, density_measure = DENSITY_MEASURE):
         cur.execute("create index on B_" + str(i) + "(att)")
         cur.execute("SELECT * from D_" + str(i))
         for count,item in enumerate(cur):
-            # if count % 1000 == 0:
-            #     print count
             a,x = item
-            # base = time.time()
             in_cur = db_conn.cursor()
             in_cur.execute("delete from B_" + str(i) + " where att='" + a + "'")
             b_i_lens[i-1] -= 1
-            # print 'time1: ' + str(time.time() - base)
-            # base = time.time()
             mass_b -= x
             density = calculate_density(db_conn,mass_b,mass_r, N, b_i_lens, R_i_lens)
-            # print 'time2: ' + str(time.time() - base)
-            # base = time.time()
             in_cur.execute("UPDATE order_" + str(i) + " set r=" + str(r) + " where att='" + a + "'")
             in_cur.execute("INSERT INTO order_" + str(i) + " (att, r) select " + a + ',' + str(r) + " where not exists (select 1 from order_" + str(i) + " where att='" + a + "')")
             r += 1
-            # print 'time3: ' + str(time.time() - base)
-            # base = time.time()
             if density > maxDensity:
                 maxDensity, maxR = density, r
 
-            # cur.execute("delete from D_" + str(i) + " where att in (select att from D_" + str(i) + " limit 1)")
         cur.execute("delete from B where att_" + str(i) + " in (select att from D_" + str(i) + ")")
         sumB = 0
         for j in range(1, N + 1):
@@ -214,12 +186,11 @@ def Dcube(db_conn, N, K):
         cur.execute("select sum(x) from R")
         for x in cur:
             mass_r = x[0]
-       
+
         find_single_block(db_conn,N,mass_r)
 
         cur.execute("delete from R where " + update_R_str(N))
         gm_sql_create_and_insert(db_conn, 'B_ori', 'R_ori', col_fmt, col, '*')
-        
         
         for j in range(1,N+1):   
             gm_sql_table_drop_create(db_conn, 'tmp_B_ori' , col_fmt)
