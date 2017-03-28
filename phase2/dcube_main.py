@@ -76,15 +76,16 @@ def select_dimension(db_conn, mass_b, mass_r, N, dim_select_policy = DIM_SELECT_
                 cur.execute("insert into B_" + str(j) + ' values (' + a + ')')    
         return maxDimen
 
-def calculate_density(db_conn, mass_b, mass_r, N, density_measure = DENSITY_MEASURE):
+def calculate_density(db_conn, mass_b, mass_r, N, B_i_lens, density_measure = DENSITY_MEASURE):
     # input table: B_i, R_i
     cur = db_conn.cursor()
     if density_measure == "ARITHMIC":
-        sumB = 0
-        for j in range(1, N + 1):
-            cur.execute("select count(*) from B_" + str(j))
-            for x in cur:
-                sumB += x[0]
+        # sumB_1 = 0
+        # for j in range(1, N + 1):
+        #     cur.execute("select count(*) from B_" + str(j))
+        #     for x in cur:
+        #         sumB_1 += x[0]
+        sumB = sum(B_i_lens)
         return (N*mass_b*1.0/sumB)
     elif density_measure == "GEOMETRIC":
         prodB = 0
@@ -127,37 +128,62 @@ def find_single_block(db_conn, N, mass_r, density_measure = DENSITY_MEASURE):
         for x in cur:
             sumB += x[0]
     while sumB != 0:
+        print 'mass_b: ' + str(mass_b)
         for j in range(1, N + 1):
             gm_sql_table_drop_create(db_conn, 'MB_' + str(j), 'att varchar, col_sum integer')
-            cur.execute("INSERT INTO MB_" + str(j) + " select att_" + str(j) + ", sum(x) from B group by att_" + str(j))
+            cur.execute("INSERT INTO MB_" + str(j) + " select att_" + str(j) + ",sum(x) from B group by att_" + str(j))
+            
+
         i = select_dimension(db_conn, mass_b, mass_r, N)
-        
+
         gm_sql_table_drop_create(db_conn, 'D_' + str(i), 'att varchar, col_sum integer')
+        cur.execute("create index on B_" + str(i) + "(att)")
         B_len = table_len(db_conn, 'B_' + str(i))
+        if B_len == 0:
+            B_len = 1e-6
         cur.execute("INSERT INTO D_" + str(i) + " select att, col_sum from MB_" + str(i) + " where col_sum <= " + str(1.0 * mass_b / B_len) + " order by col_sum asc")
-        gm_sql_create_and_insert(db_conn, 'D_copy_' + str(i), 'D_' + str(i), 'att varchar, col_sum integer', 'att, col_sum', '*')
+        # gm_sql_create_and_insert(db_conn, 'D_copy_' + str(i), 'D_' + str(i), 'att varchar, col_sum integer', 'att, col_sum', '*')
         # gm_sql_print_table(db_conn,'D_' + str(i)) #checked
         D_len = table_len(db_conn, 'D_' + str(i))
-        # cur.execute("select att,col_sum from D_" + str(i) + " limit 1")
-        cur.execute("SELECT * from D_3")
+        gm_sql_table_drop_create(db_conn, 'B_' + str(i), 'att varchar')
+        cur.execute("INSERT INTO B_" + str(i) + " select att from MB_" + str(i))
+
+        b_i_lens = []
+        for idx in range(1, N + 1):
+            in_cur = db_conn.cursor()
+            in_cur.execute("select count(*) from B_" + str(idx))
+            for x in in_cur:
+                b_i_lens.append(x[0])
+
+        cur.execute("SELECT * from D_" + str(i))
         for count,item in enumerate(cur):
             if count % 1000 == 0:
                 print count
             a,x = item
+            # base = time.time()
             in_cur = db_conn.cursor()
             in_cur.execute("delete from B_" + str(i) + " where att='" + a + "'")
+            b_i_lens[i-1] -= 1
+            # print 'time1: ' + str(time.time() - base)
+            # base = time.time()
             mass_b -= x
-            density = calculate_density(db_conn,mass_b,mass_r, N)
-            in_cur.execute("INSERT INTO order_" + str(i) + " values (" + a + "," + str(x) + ")")
+            density = calculate_density(db_conn,mass_b,mass_r, N, b_i_lens)
+            # print 'time2: ' + str(time.time() - base)
+            # base = time.time()
+            in_cur.execute("INSERT INTO order_" + str(i) + " values (" + a + "," + str(r) + ")")
+            r += 1
+            # print 'time3: ' + str(time.time() - base)
+            # base = time.time()
             if density > maxDensity:
                 maxDensity, maxR = density, r
+
             # cur.execute("delete from D_" + str(i) + " where att in (select att from D_" + str(i) + " limit 1)")
-        cur.execute("delete from B where att_" + str(i) + " in (select att from D_copy_" + str(i) + ")")
+        cur.execute("delete from B where att_" + str(i) + " in (select att from D_" + str(i) + ")")
+        sumB = 0
         for j in range(1, N + 1):
             cur.execute("select count(*) from B_" + str(j))
             for x in cur:
                 sumB += x[0]
-        print sumB
 
     for j in range(1, N + 1):
         gm_sql_table_drop_create(db_conn, 'B_' + str(j), 'att varchar')
@@ -180,12 +206,48 @@ def Dcube(db_conn, N, K):
         print k
         find_single_block(db_conn,N,mass_r)
         
-        cur.execute("delete from R where att_1 IN (INNER JOIN B_1 on B_1.att=R.att_1) and att_2 IN (INNER JOIN B_2 on B_2.att=R.att_2) and att_3 IN (INNER JOIN B_3 on B_3.att=R.att_3)")
-        # cur.execute("delete from R select * from R " + inner_join_str('R',N))
-        # for j in range(1,N+1):
-        #     cur.execute("delete from R where att_" + str(j) + " in (select att from B_" + str(j) + ")")
-        gm_sql_table_drop_create(db_conn, 'result_' + str(k), col_fmt)
-        cur.execute("INSERT INTO result_" + str(k) + " select R_ori from R_ori " + inner_join_str('R_ori', N))
+        for j in range(1,N+1):
+            print 'B'+str(j)
+            gm_sql_print_table(db_conn,'B_' + str(j))
+
+        for j in range(1,N+1):
+            gm_sql_table_drop_create(db_conn, 'tmp_R' , col_fmt)
+            cur.execute("INSERT INTO tmp_R select R.* from R left join B_" + str(j) + " on R.att_" + str(j) + "=B_" + str(j) + ".att where B_" + str(j) + ".att is null")
+            gm_sql_create_and_insert(db_conn, 'R', 'tmp_R' , col_fmt, col, '*')
+        
+        gm_sql_create_and_insert(db_conn, 'B_ori', 'R_ori', col_fmt, col, '*')
+
+
+
+        for j in range(1,N+1):   
+            gm_sql_table_drop_create(db_conn, 'tmp_B_ori' , col_fmt)
+            cur.execute("INSERT INTO tmp_B_ori select B_ori.* from B_ori inner join B_" + str(j) + " on B_ori.att_" + str(j) + "=B_" + str(j) + ".att")
+            print 'j:' + str(j)
+            print 'length:' + str(table_len(db_conn, 'tmp_B_ori'))
+            gm_sql_create_and_insert(db_conn, 'B_ori', 'tmp_B_ori' , col_fmt, col, '*')
+
+        gm_sql_create_and_insert(db_conn, 'result_' + str(k), 'B_ori', col_fmt, col, '*')
+
+        
+
+        cur.execute("select sum(x) from result_" + str(k))
+        for x in cur:
+            print str(k) + 'th block mass: ' + str(x[0])
+        cur.execute("select max(att_1) from result_" + str(k))
+        currMax = 0
+        for x in cur:
+            print str(k) + 'th block max: ' + str(x[0])
+        cur.execute("select min(att_1) from result_" + str(k))
+        currMin = 0
+        for x in cur:
+            print str(k) + 'th block min: ' + str(x[0])
+
+
+
+
+
+
+        
 
 if __name__ == '__main__':
     db_conn = gm_db_initialize()
@@ -193,6 +255,6 @@ if __name__ == '__main__':
     R = 'DARPA'
     col_fmt = 'att_1 varchar, att_2 varchar, att_3 varchar, x integer'
     cols = 'att_1,att_2,att_3,x'
-    filename = 'example_data.txt'
+    filename = 'example_data_100.txt'
     load_data(db_conn, col_fmt, cols, filename)
-    Dcube(db_conn, 3, 1)
+    Dcube(db_conn, 3, 3)
