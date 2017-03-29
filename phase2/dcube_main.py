@@ -34,8 +34,9 @@ def table_len(db_conn, table_name):
 
 def select_dimension(db_conn, mass_b, mass_r, N, dim_select_policy = DIM_SELECT_POLICY):
     # input table: B_i, R_i, MB_i
+    cur = db_conn.cursor()
     if dim_select_policy == 'CARDINALITY':
-        cur = db_conn.cursor()
+        
         maxCount = 0
         maxIndex = 1
         for j in range(1, N + 1):
@@ -48,36 +49,61 @@ def select_dimension(db_conn, mass_b, mass_r, N, dim_select_policy = DIM_SELECT_
     elif dim_select_policy == 'DENSITY':
         maxDensity = float('-inf')
         maxDimen = 1
+        b_i_lens = []
+        R_i_lens = []
+        for idx in range(1, N + 1):
+            in_cur = db_conn.cursor()
+            in_cur.execute("select count(*) from B_" + str(idx))
+            for x in in_cur:
+                b_i_lens.append(x[0])
+
+            in_cur.execute("select count(*) from R_" + str(idx))
+            for x in in_cur:
+                R_i_lens.append(x[0])
+            
+        for i in range(1,N + 1):
+            gm_sql_create_and_insert(db_conn, 'B_tmp_' + str(i), 'B_' + str(i), 'att varchar', 'att', '*')
+            
         for j in range(1, N + 1):
             cpMassB = mass_b
+            #keep mass_b unedited, only edit cpMassB
             cur.execute("select count(*) from B_" + str(j))
             flag = 1
             for x in cur:
                 if x[0]==0:
                     flag = 0
             if flag==0:
-                continue      #j++
-            #if |Bi| != 0
+                continue     
+
             gm_sql_table_drop_create(db_conn, 'D_tmp_' + str(j), 'att varchar, col_sum integer')
-            B_len = table_len(db_conn, 'B_' + str(j))
-            cur.execute("INSERT INTO D_tmp_" + str(j) + " select att, col_sum from MB_" + str(j) + " where col_sum <= " + str(1.0 * mass_b / B_len))
-            D_len = table_len(db_conn, 'D_tmp_' + str(j))
-            for t in range(D_len):
-                cur.execute("select att,col_sum from D_tmp" + str(i) + " limit 1")
-                for item in cur:
-                    a,x = item
-                cur.execute("delete from B_" + str(j) + " where att='" + a + "'")
+            B_len = table_len(db_conn, 'B_tmp_' + str(j))
+            cur.execute("INSERT INTO D_tmp_" + str(j) + " select B_tmp_" + str(j) + ".att, 0 from B_tmp_" + str(j) + " left join MB_" + str(j) + " on B_tmp_" + str(j) + ".att=MB_" + str(j) + ".att where MB_" + str(j) + ".att is null")
+            if B_len == 0:
+                B_len = 1e-6
+            cur.execute("INSERT INTO D_tmp_" + str(j) + " select att, col_sum from MB_" + str(j) + " where col_sum <= " + str(1.0 * mass_b / B_len) + " order by col_sum asc")
+
+
+            cur.execute("select * from D_tmp_" + str(j))
+            in_cur = db_conn.cursor()
+            count = 0
+            for item in cur:
+                count += 1
+                a,x = item
+                in_cur.execute("delete from B_tmp_" + str(j) + " where att='" + a + "'")
                 cpMassB -= x
-            density = calculate_density(db_conn,cpMassB,mass_r, N)
+            
+            
+            cur.execute("select count(*) from B_tmp_" + str(j))
+            for x in cur:
+                lenThisDimen = x[0]
+            tmpBLens = b_i_lens[:j-1] + [lenThisDimen] + b_i_lens[j:]
+
+            
+            density = calculate_density(db_conn,cpMassB,mass_r, N, tmpBLens, R_i_lens)
             if density>maxDensity:
                 maxDensity = density
                 maxDimen = j
-            #add back.
-            for t in range(D_len):
-                cur.execute("select att,col_sum from D_tmp" + str(i) + " limit 1")
-                for item in cur:
-                    a,x = item
-                cur.execute("insert into B_" + str(j) + ' values (' + a + ')')    
+ 
         return maxDimen
 
 def calculate_density(db_conn, mass_b, mass_r, N, B_i_lens, R_i_lens = [], density_measure = DENSITY_MEASURE):
